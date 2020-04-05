@@ -1,0 +1,161 @@
+--- src/common/atomic.h.org	2018-08-18 10:29:20.343540876 +0200
++++ src/common/atomic.h	2018-08-18 10:30:18.433288991 +0200
+@@ -1186,6 +1186,127 @@
+ #endif /* __ARCH_M68K_ATOMIC __ */
+ 
+ #else
++#ifdef __arm__
++
++/*
++ * That part of code for ARM11 was taken from ALSA's iatomic.h
++ */
++
++/*
++ * FIXME: bellow code is valid only for SA11xx
++ */
++
++/*
++ * Save the current interrupt enable state & disable IRQs
++ */
++#define local_irq_save(x)					\
++	({							\
++		unsigned long temp;				\
++	__asm__ __volatile__(					\
++	"mrs	%0, cpsr		@ local_irq_save\n"	\
++"	orr	%1, %0, #128\n"					\
++"	msr	cpsr_c, %1"					\
++	: "=r" (x), "=r" (temp)					\
++	:							\
++	: "memory");						\
++	})
++
++/*
++ * restore saved IRQ & FIQ state
++ */
++#define local_irq_restore(x)					\
++	__asm__ __volatile__(					\
++	"msr	cpsr_c, %0		@ local_irq_restore\n"	\
++	:							\
++	: "r" (x)						\
++	: "memory")
++
++#define __save_flags_cli(x) local_irq_save(x)
++#define __restore_flags(x) local_irq_restore(x)
++
++typedef struct { volatile int counter; } atomic_t;
++
++#define ATOMIC_INIT(i)	{ (i) }
++
++#define atomic_read(v)	((v)->counter)
++#define atomic_set(v,i)	(((v)->counter) = (i))
++
++static __inline__ void atomic_add(int i, volatile atomic_t *v)
++{
++	unsigned long flags;
++
++	__save_flags_cli(flags);
++	v->counter += i;
++	__restore_flags(flags);
++}
++
++static __inline__ void atomic_sub(int i, volatile atomic_t *v)
++{
++	unsigned long flags;
++
++	__save_flags_cli(flags);
++	v->counter -= i;
++	__restore_flags(flags);
++}
++
++static __inline__ void atomic_inc(volatile atomic_t *v)
++{
++	unsigned long flags;
++
++	__save_flags_cli(flags);
++	v->counter += 1;
++	__restore_flags(flags);
++}
++
++static __inline__ void atomic_dec(volatile atomic_t *v)
++{
++	unsigned long flags;
++
++	__save_flags_cli(flags);
++	v->counter -= 1;
++	__restore_flags(flags);
++}
++
++static __inline__ int atomic_dec_and_test(volatile atomic_t *v)
++{
++	unsigned long flags;
++	int result;
++
++	__save_flags_cli(flags);
++	v->counter -= 1;
++	result = (v->counter == 0);
++	__restore_flags(flags);
++
++	return result;
++}
++
++static inline int atomic_add_negative(int i, volatile atomic_t *v)
++{
++	unsigned long flags;
++	int result;
++
++	__save_flags_cli(flags);
++	v->counter += i;
++	result = (v->counter < 0);
++	__restore_flags(flags);
++
++	return result;
++}
++
++static __inline__ void atomic_clear_mask(unsigned long mask, unsigned long *addr)
++{
++	unsigned long flags;
++
++	__save_flags_cli(flags);
++	*addr &= ~mask;
++	__restore_flags(flags);
++}
++
++#define mb() __asm__ __volatile__ ("" : : : "memory")
++#define rmb() mb()
++#define wmb() mb()
++
++#else
+ 
+ #warning libs/pbd has no implementation of strictly atomic operations for your hardware.
+ 
+@@ -1231,6 +1352,7 @@
+ }
+ 
+ #  endif /* __NO_STRICT_ATOMIC */
++#  endif /* arm */
+ #  endif /* m68k */
+ #  endif /* mips */
+ #  endif /* s390 */
+--- src/common/RTMath.cpp.org	2018-08-18 10:27:29.504025946 +0200
++++ src/common/RTMath.cpp	2018-08-18 10:29:08.333593140 +0200
+@@ -22,6 +22,9 @@
+  ***************************************************************************/
+ 
+ #include "RTMath.h"
++#if defined(__arm__)
++#include <time.h>
++#endif
+ 
+ // for unsafeMicroSeconds() implementation
+ #if !defined(WIN32) && !defined(__APPLE__)
+@@ -73,6 +76,10 @@
+     return t;
+     #elif defined(__APPLE__)
+     return (time_stamp_t) mach_absolute_time();
++    #elif defined(__arm__)
++    timespec tp;
++    clock_gettime(CLOCK_MONOTONIC, &tp);
++    return tp.tv_nsec;
+     #else // we don't want to use a slow generic solution
+     #  error "Sorry, LinuxSampler lacks time stamp code for your system."
+     #  error "Please report this error and the CPU you are using to the LinuxSampler developers mailing list!"
